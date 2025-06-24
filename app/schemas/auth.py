@@ -6,15 +6,16 @@ class SignupRequest(BaseModel):
     password: str
    
 class ResetVerifyRequest(BaseModel):
-    otp: str
+    email: EmailStr
 
 class ResendOtpRequest(BaseModel):
     user_id: str
+    email: EmailStr
 
 class ResetPasswordRequest(BaseModel):
-    current_password: str
+    user_id: str
     new_password: str
-    confirm_new_password: str
+    
 
 class VerifyOtpRequest(BaseModel):
     user_id: str

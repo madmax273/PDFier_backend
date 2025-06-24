@@ -232,64 +232,45 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
 #     }
 
 
-# @router.post("/forgot")
-# async def forgot_password(request: ResetVerifyRequest):
-#     user_id = ObjectId(request.user_id)
-#     user = await db.db["users"].find_one({"_id": user_id})
+@router.post("/forgot")
+async def forgot_password(request: ResetVerifyRequest,db = Depends(get_mongo_db)):
+    email=request.email
+    user = await db["users"].find_one({"email": email})
 
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-#     otp = str(random.randint(1000, 9999))
-#     otp_data = {
-#         "user_id": user_id,
-#         "otp": otp,
-#         "created_at": datetime.utcnow(),
-#         "expires_at": datetime.utcnow() + timedelta(minutes=10)
-#     }
-#     if await db.db["otps"].find_one({"user_id": user_id}):
-#         await db.db["otps"].delete_one({"user_id": user_id})
-#     await db.db["otps"].insert_one(otp_data)
-#     send_verification_email(user["email"], otp)
+    otp = str(random.randint(1000, 9999))
+    otp_data = {
+        "user_id": user["_id"],
+        "otp": otp,
+        "created_at": datetime.utcnow(),
+        "expires_at": datetime.utcnow() + timedelta(minutes=10)
+    }
+    if await db["otps"].find_one({"user_id": user["_id"]}):
+        await db["otps"].delete_one({"user_id": user["_id"]})
+    await db["otps"].insert_one(otp_data)
+    send_verification_email(user["email"], otp)
 
-#     return {
-#         "message": "OTP sent to email",
-#         "user_id": str(user_id),
-#         "otp": otp
-#     }
+    return {
+        "message": "OTP sent to email",
+        "user_id": str(user["_id"]),
+        "otp": otp
+    }
 
-# @router.post("/forgot/verify")
-# async def verify_forgot(request: ResetVerifyRequest):
-#     user_id = ObjectId(request.user_id)
-#     otp_data = await db.db["otps"].find_one({"user_id": user_id})
 
-#     if not otp_data:
-#         raise HTTPException(status_code=400, detail="Invalid OTP")
+@router.post("/forgot/reset-password")
+async def reset_forgot(request: ResetPasswordRequest,db = Depends(get_mongo_db)):
+    user_id = ObjectId(request.user_id)
+    user = await db["users"].find_one({"_id": user_id})
 
-#     if request.otp != otp_data["otp"]:
-#         raise HTTPException(status_code=400, detail="Wrong OTP")
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-#     if otp_data["expires_at"] < datetime.utcnow():
-#         raise HTTPException(status_code=400, detail="OTP expired")
-
-#     await db.db["otps"].delete_many({"user_id": user_id})
-
-#     return {
-#         "message": "OTP verified",
-#         "user_id": str(user_id)
-#     }
-
-# @router.post("/forgot/reset")
-# async def reset_forgot(request: ResetPasswordRequest):
-#     user_id = ObjectId(request.user_id)
-#     user = await db.db["users"].find_one({"_id": user_id})
-
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     hashed_password = hash_password(user["password"])
-#     await db.db["users"].update_one({"_id": user_id}, {"$set": {"password": hashed_password}})
-
-#     return {
-#         "message": "Password reset successful"
-#     }
+    hashed_password = hash_password(request.new_password)
+    await db["users"].update_one({"_id": user_id}, {"$set": {"password": hashed_password}})
+    await db["users"].update_one({"_id": user_id}, {"$set": {"password": hashed_password, "updated_at": datetime.utcnow()}})
+    
+    return {
+        "message": "Password reset successful"
+    }
