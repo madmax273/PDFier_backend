@@ -9,6 +9,8 @@ import random
 from bson import ObjectId
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from jose import JWTError
+from fastapi.responses import Response
+from app.database.models import OTPModel, UserModel
 
 security = HTTPBearer()  # login endpoint issues tokens
 
@@ -29,32 +31,34 @@ async def signup(data: SignupRequest, request: Request, db = Depends(get_mongo_d
         ip_address = request.client.host
         hashed_pwd = hash_password(data.password)
         
-        user = {
-            "name": data.username,
-            "email": data.email,
-            "password": hashed_pwd,
-            "verified": False,
-            "ip_address": ip_address,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
-        }
+        user = UserModel(
+            name=data.username,
+            email=data.email,
+            password=hashed_pwd,
+            verified=False,
+            ip_address=ip_address,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            plan_type="basic",
+            usage_metrics={},   
+        )
         
         # Save user to database
-        user_result = await db["users"].insert_one(user)
+        user_result = await db["users"].insert_one(user.dict())
         user_id = user_result.inserted_id
         
         # Generate and save OTP
         otp = str(random.randint(1000, 9999))
-        otp_data = {
-            "user_id": user_id,
-            "otp": otp,
-            "created_at": datetime.utcnow(),
-            "expires_at": datetime.utcnow() + timedelta(minutes=10)
-        }
+        otp_data = OTPModel(
+            user_id=str(user_id),
+            otp=otp,
+            created_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(minutes=10)
+        )
         
         # Remove any existing OTP for this user
-        await db["otps"].delete_many({"user_id": user_id})
-        await db["otps"].insert_one(otp_data)
+        await db["otps"].delete_many({"user_id": str(user_id)})
+        await db["otps"].insert_one(otp_data.dict())
         
         # Send verification email
         send_verification_email(data.email, otp)
@@ -74,7 +78,7 @@ async def signup(data: SignupRequest, request: Request, db = Depends(get_mongo_d
 
 @router.post("/verify")                                                                       #Can apply rate limiting in future
 async def verify(data: VerifyOtpRequest,db = Depends(get_mongo_db)):
-    user_id = ObjectId(data.user_id)
+    user_id = data.user_id
     otp_data = await db["otps"].find_one({"user_id": user_id, "otp": data.otp})
 
     if not otp_data:
@@ -83,7 +87,7 @@ async def verify(data: VerifyOtpRequest,db = Depends(get_mongo_db)):
     if otp_data["expires_at"] < datetime.utcnow():
         raise HTTPException(status_code=400, detail="OTP expired")
 
-    await db["users"].update_one({"_id": user_id}, {"$set": {"verified": True}})
+    await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"verified": True}})
     await db["otps"].delete_many({"user_id": user_id})
 
     return {"message": "Email verified successfully.", "user_id": str(user_id)}
@@ -91,7 +95,7 @@ async def verify(data: VerifyOtpRequest,db = Depends(get_mongo_db)):
 
 @router.post("/resend-otp")
 async def resend_otp(data: ResendOtpRequest,db = Depends(get_mongo_db)):
-    user_id = ObjectId(data.user_id)
+    user_id = data.user_id
     otp_data = await db["otps"].find_one({"user_id": user_id})
 
     if not otp_data:
@@ -134,11 +138,18 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
 
     access_token = create_access_token({"sub": str(user["_id"])})
     refresh_token = create_refresh_token({"sub": str(user["_id"])})
+    response = Response(status_code=200)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=1800, # 30 minutes
+    )
 
     return {
-        "access_token": access_token,
         "refresh_token": refresh_token,
-        "token_type": "bearer"
     }
 
 # #     Content-Type: application/x-www-form-urlencoded
@@ -194,27 +205,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
 #     }
 
 
-# @router.post("/reset/verify")
-# async def verify_reset(request: ResetVerifyRequest,current_user: dict = Depends(get_current_user)):
-#     user_id = ObjectId(current_user["user_id"])
-#     otp_data = await db.db["otps"].find_one({"user_id": user_id})
-
-#     if not otp_data:
-#         raise HTTPException(status_code=400, detail="Invalid OTP")
-
-#     if request.otp != otp_data["otp"]:
-#         raise HTTPException(status_code=400, detail="Wrong OTP")
-
-#     if otp_data["expires_at"] < datetime.utcnow():
-#         raise HTTPException(status_code=400, detail="OTP expired")
-
-#     await db.db["otps"].delete_many({"user_id": user_id})
-
-#     return {
-#         "message": "OTP verified",
-#         "user_id": str(user_id)
-#     }
-
 
 # @router.post("/reset")
 # async def reset_password(request: ResetPasswordRequest,current_user: dict = Depends(get_current_user)):
@@ -241,15 +231,15 @@ async def forgot_password(request: ResetVerifyRequest,db = Depends(get_mongo_db)
         raise HTTPException(status_code=404, detail="User not found")
 
     otp = str(random.randint(1000, 9999))
-    otp_data = {
-        "user_id": user["_id"],
-        "otp": otp,
-        "created_at": datetime.utcnow(),
-        "expires_at": datetime.utcnow() + timedelta(minutes=10)
-    }
-    if await db["otps"].find_one({"user_id": user["_id"]}):
-        await db["otps"].delete_one({"user_id": user["_id"]})
-    await db["otps"].insert_one(otp_data)
+    otp_data = OTPModel(
+        user_id=str(user["_id"]),
+        otp=otp,
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(minutes=10)
+    )
+    if await db["otps"].find_one({"user_id": str(user["_id"])}):
+        await db["otps"].delete_one({"user_id": str(user["_id"])})  
+    await db["otps"].insert_one(otp_data.dict())
     send_verification_email(user["email"], otp)
 
     return {

@@ -28,7 +28,6 @@ def get_mongo_db():
         # This should ideally not happen if lifespan events are set up correctly,
         # but it's a safeguard for direct dependency testing or misconfiguration.
         raise RuntimeError("MongoDB client is not initialized.")
-    print(client[settings.DB_NAME])
     return client[settings.DB_NAME]
 
 if __name__ == "__main__":
