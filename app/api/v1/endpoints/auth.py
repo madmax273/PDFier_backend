@@ -10,8 +10,8 @@ from bson import ObjectId
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from jose import JWTError
 from fastapi.responses import Response
-from app.database.models import OTPModel, UserModel
-
+from app.database.models import OTPModel, UserModel, UsageMetrics
+from app.core.plans import get_initial_usage_metrics
 security = HTTPBearer()  # login endpoint issues tokens
 
 router = APIRouter()
@@ -30,6 +30,8 @@ async def signup(data: SignupRequest, request: Request, db = Depends(get_mongo_d
         # Create new user
         ip_address = request.client.host
         hashed_pwd = hash_password(data.password)
+        usage_metrics = UsageMetrics(**get_initial_usage_metrics("basic"))
+        
         
         user = UserModel(
             name=data.username,
@@ -40,7 +42,7 @@ async def signup(data: SignupRequest, request: Request, db = Depends(get_mongo_d
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
             plan_type="basic",
-            usage_metrics={},   
+            usage_metrics=usage_metrics,   
         )
         
         # Save user to database
@@ -152,13 +154,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
         "refresh_token": refresh_token,
     }
 
-# #     Content-Type: application/x-www-form-urlencoded
-
-# # username=example@email.com
-# # password=yourpassword
-
-
-
 # @router.post("/refresh")
 # async def refresh_token(data: RefreshTokenRequest):
 #     payload = decode_token(data.refresh_token)
@@ -179,47 +174,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
 #         "token_type": "bearer"
 #     }
 
-
-# @router.post("/reset/request")
-# async def request_reset(current_user: dict = Depends(get_current_user)):
-#     user = await db.db["users"].find_one({"_id": ObjectId(current_user["user_id"])})
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     otp = str(random.randint(1000, 9999))
-#     otp_data = {
-#         "user_id": user["_id"],
-#         "otp": otp,
-#         "created_at": datetime.utcnow(),
-#         "expires_at": datetime.utcnow() + timedelta(minutes=10)
-#     }
-#     if await db.db["otps"].find_one({"user_id": user["_id"]}):
-#         await db.db["otps"].delete_one({"user_id": user["_id"]})
-#     await db.db["otps"].insert_one(otp_data)
-#     send_verification_email(user["email"], otp)
-
-#     return {
-#         "message": "OTP sent to email",
-#         "user_id": str(user["_id"]),
-#         "otp": otp
-#     }
-
-
-
-# @router.post("/reset")
-# async def reset_password(request: ResetPasswordRequest,current_user: dict = Depends(get_current_user)):
-#     user_id = ObjectId(current_user["user_id"])
-#     user = await db.db["users"].find_one({"_id": user_id})
-
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     hashed_password = hash_password(user["password"])
-#     await db.db["users"].update_one({"_id": user_id}, {"$set": {"password": hashed_password}})
-
-#     return {
-#         "message": "Password reset successful"
-#     }
 
 
 @router.post("/forgot")
