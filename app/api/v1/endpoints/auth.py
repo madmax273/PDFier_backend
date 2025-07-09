@@ -147,8 +147,9 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
         value=access_token,
         httponly=True,
         secure=True,
-        samesite="strict",
+        samesite="None",
         max_age=1800, # 30 minutes
+        path="/"
     )
 
     return {

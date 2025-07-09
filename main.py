@@ -20,10 +20,11 @@ app = FastAPI(
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["http://localhost:3000"],  # In production, replace with specific origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Create uploads directory if it doesn't exist
@@ -41,4 +42,8 @@ async def root():
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app",
+     host="0.0.0.0", port=8000, 
+     reload=True,
+     ssl_keyfile="localhost+1-key.pem",
+     ssl_certfile="localhost+1.pem")
