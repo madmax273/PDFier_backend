@@ -2,7 +2,7 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from app.core.config import settings
 from jose import jwt, JWTError, ExpiredSignatureError
-
+from fastapi import HTTPException
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str):
@@ -23,10 +23,10 @@ def decode_token(token: str):
         return payload
     except ExpiredSignatureError:
         # Token is expired
-        return {"error": "Token has expired"}
+        raise HTTPException(status_code=401, detail="Token has expired")
     except JWTError:
         # Token is invalid
-        return {"error": "Invalid token"}
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 

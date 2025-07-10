@@ -1,7 +1,7 @@
 from app.database.connection import get_mongo_db
 from app.core.security import decode_token
 from app.database.models import UserModel
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status,Request
 from bson import ObjectId
 from datetime import datetime
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -9,16 +9,21 @@ from app.core.plans import get_initial_usage_metrics # Assuming this is the help
 from datetime import datetime, date
 from typing import Union
 
-security_scheme = HTTPBearer() # Define a security scheme for protected routes
+security_scheme = HTTPBearer(auto_error=False) # Define a security scheme for protected routes
 
 async def get_current_user_or_guest(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
     db = Depends(get_mongo_db)
-) -> Union[UserModel, None]:
+) -> Union[dict, None]:
     """
     Dependency that returns the current user if authenticated, or None for guests.
     """
-    token = credentials.credentials
+    token = request.cookies.get("access_token")
+    if credentials and not token:
+        token = credentials.credentials
+        print("token from headers",token)
+    print("token from cookies",token)
     try:
         payload = decode_token(token)
         user_id: str = payload.get("sub")
@@ -28,13 +33,15 @@ async def get_current_user_or_guest(
         user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
         if not user_doc:
             return None
-            
+
         # Handle quota resets for authenticated users
         await _handle_quota_reset(user_doc, db)
-        return UserModel.model_validate(user_doc)
+        return user_doc
+    except HTTPException as e:
+        raise 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="error in dependency")
         
-    except (JWTError, HTTPException):
-        return None
 
 async def _handle_quota_reset(user_doc: dict, db):
     """Handle quota reset logic for authenticated users"""
