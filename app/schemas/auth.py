@@ -21,7 +21,7 @@ class VerifyOtpRequest(BaseModel):
     user_id: str
     otp: str
 
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+# class RefreshTokenRequest(BaseModel):
+#     refresh_token: str
 
    

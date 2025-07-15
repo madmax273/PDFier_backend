@@ -2,3 +2,6 @@ tests/
 .env
 __pycache__
 env/
+localhost+1.pem
+localhost+1-key.pem 
+firebase-admin-key.json

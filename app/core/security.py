@@ -28,9 +28,22 @@ def decode_token(token: str):
         # Token is invalid
         raise HTTPException(status_code=401, detail="Invalid token")
 
+def decode_refresh_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_REFRESH_SECRET_KEY,
+            algorithms=["HS256"]
+        )
+        return payload
+    except ExpiredSignatureError:
+        # Token is expired
+        raise HTTPException(status_code=401, detail="Refresh token has expired")
+    except JWTError:
+        # Token is invalid
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-
-def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes=15)):
+def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)):
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({
@@ -40,7 +53,7 @@ def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
-def create_refresh_token(data: dict, expires_delta: timedelta = timedelta(days=7)):
+def create_refresh_token(data: dict, expires_delta: timedelta = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)):
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({

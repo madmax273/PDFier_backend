@@ -7,9 +7,16 @@ from datetime import datetime
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.plans import get_initial_usage_metrics # Assuming this is the helper for current limits
 from datetime import datetime, date
-from typing import Union
+from typing import Union, Optional
 
-security_scheme = HTTPBearer(auto_error=False) # Define a security scheme for protected routes
+class OptionalHTTPBearer(HTTPBearer):
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
+        try:
+            return await super().__call__(request)
+        except HTTPException:
+            return None  # Instead of raising, return None for guest users
+
+security_scheme = OptionalHTTPBearer(auto_error=False)
 
 async def get_current_user_or_guest(
     request: Request,
@@ -19,13 +26,20 @@ async def get_current_user_or_guest(
     """
     Dependency that returns the current user if authenticated, or None for guests.
     """
-    token = request.cookies.get("access_token")
+    print("Authorization Header:", request.headers.get("authorization"))
+
+    if not credentials or not credentials.credentials or credentials.credentials.lower() == "undefined":
+        print("No valid token provided (guest user)")
+        return None
+
+
+    token = None
+    # token = request.cookies.get("access_token")
     if credentials and not token:
         token = credentials.credentials
-        print("token from headers",token)
-    print("token from cookies",token)
+    
     try:
-        payload = decode_token(token)
+        payload = (lambda t: decode_token(t))(token)
         user_id: str = payload.get("sub")
         if not user_id:
             return None
