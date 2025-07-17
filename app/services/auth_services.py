@@ -68,7 +68,8 @@ async def _handle_quota_reset(user_doc: dict, db):
             last_reset_date = datetime.fromisoformat(last_reset_date_str).date()
         except ValueError:
             pass
-
+    print("last_reset_date",last_reset_date)
+    print("current_date_utc",current_date_utc)
     if not last_reset_date or last_reset_date < current_date_utc:
         user_doc["usage_metrics"]["last_quota_reset_date"] = datetime.utcnow().isoformat()
         user_doc["usage_metrics"]["pdf_processed_today"] = 0

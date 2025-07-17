@@ -13,10 +13,14 @@ router = APIRouter()
 
 @router.get("/me")
 async def read_users_me(
-    current_user: dict = Depends(get_current_user_or_guest),
+    current_user: dict|None = Depends(get_current_user_or_guest),
     db = Depends(get_mongo_db)
 ):
     try:
+        if not current_user:
+            print("Guest user")
+            return JSONResponse(content={"status":"error","status_code":401, "message":"Token Not send Guest User"},status_code=status.HTTP_401_UNAUTHORIZED)
+
         user_id=current_user.get("_id")
         print("user_id",user_id)
         user = await db["users"].find_one({"_id": ObjectId(user_id)})

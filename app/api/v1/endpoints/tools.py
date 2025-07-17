@@ -10,8 +10,16 @@ from io import BytesIO
 from typing import List
 from bson.objectid import ObjectId
 from fastapi.encoders import jsonable_encoder
+from fastapi import Form
+import fitz  # PyMuPDF
+from app.core.config import settings
+import os
+from app.utils.compress import compress_pdf_content
 
 router = APIRouter()
+
+
+# Assume router and all dependencies (get_current_user_or_guest, etc.) are defined
 
 @router.post("/pdf/merge")
 async def merge_pdf(
@@ -19,26 +27,29 @@ async def merge_pdf(
     current_user: dict | None = Depends(get_current_user_or_guest),
     db=Depends(get_mongo_db)
 ):
-   
-    if not current_user:
-        print("Guest user")
-
-        return JSONResponse(content={"status":"error","status_code":401, "message":"Guest"},status_code=status.HTTP_401_UNAUTHORIZED)
-
     if len(files) < 2:
-        raise HTTPException(detail={"status":"error","status_code":400, "message":"Please upload at least two PDF files to merge."},status_code=status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(detail={"status":"error", "message":"Please upload at least two PDF files."}, status_code=status.HTTP_400_BAD_REQUEST)
 
-    # Quota check (for logged-in users)
-    if current_user.get("usage_metrics").get("pdf_processed_today") >= current_user.get("usage_metrics").get("pdf_processed_limit_daily"):
-        raise HTTPException(detail={"status":"error","status_code":403, "message":"Daily PDF merge limit exceeded. Please upgrade your plan."},status_code=status.HTTP_403_FORBIDDEN)
+    if current_user and current_user["usage_metrics"]["pdf_processed_today"] >= current_user["usage_metrics"]["pdf_processed_limit_daily"]:
+        raise HTTPException(detail={"status":"error", "message":"Daily PDF merge limit exceeded."}, status_code=status.HTTP_403_FORBIDDEN)
 
     merger = PdfMerger()
     merged_pdf_stream = BytesIO()
 
     try:
+        # --- 1. Filename Logic (Corrected) ---
+        # Use the name of the *first* uploaded file as the base for the new filename.
+        original_name = files[0].filename
+        if original_name:
+            base_name = os.path.splitext(original_name)[0]
+        else:
+            # Provide a default name if the first file has no name
+            base_name = "merged_file"
+
+        # --- 2. PDF Merging ---
         for upload_file in files:
             if upload_file.content_type != "application/pdf":
-                raise HTTPException(detail={"status":"error","status_code":400, "message":f"File {upload_file.filename} is not a PDF."},status_code=status.HTTP_400_BAD_REQUEST)
+                raise HTTPException(detail={"status":"error", "message":f"File {upload_file.filename} is not a PDF."}, status_code=status.HTTP_400_BAD_REQUEST)
             
             file_content = await upload_file.read()
             merger.append(BytesIO(file_content))
@@ -47,39 +58,141 @@ async def merge_pdf(
         merger.close()
         merged_pdf_stream.seek(0)
         
-        print("merged_pdf_stream")
-        # Upload Merged PDF to Firebase Storage
+        # --- 3. Supabase Upload (Corrected) ---
         supabase_client = await get_supabase_client()
-        bucket=get_pdf_bucket_name()
-        # Define the path in Firebase Storage. Use user ID for organization.
-        merged_filename = f"{current_user['_id']}/merged_pdf_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
-        file_path = f"{bucket}/{merged_filename}"
-        bucket_client = supabase_client.storage.from_(bucket).upload(file_path, merged_pdf_stream.getvalue())
+        bucket = get_pdf_bucket_name()
         
-        # Generate a signed URL for download (valid for 30 minutes)
-        # This URL will be returned to the frontend for direct download.
-        download_url = supabase_client.storage.from_(bucket).create_signed_url(file_path, 1800)
-        # Update User Usage in MongoDB
+        # Define the final path INSIDE the bucket
+        if current_user:
+            file_path = f"{current_user['_id']}/{base_name}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
+        else:
+            file_path = f"guest/{base_name}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
 
-        current_pdf_processed_today=current_user['usage_metrics']['pdf_processed_today']
-        # Update the user's usage count
-        updated_user_doc = await db["users"].find_one_and_update(
-            {"_id": ObjectId(current_user['_id'])},
-            {"$inc": {"usage_metrics.pdf_processed_today": 1}},
-            return_document=True  # This ensures we get the updated document
+        print(f"Uploading to Supabase with path: {file_path}") # For debugging
+
+        # Upload the file, passing the stream object directly
+        supabase_client.storage.from_(bucket).upload(
+            path=file_path, 
+            file=merged_pdf_stream.getvalue(), # Reverted to .getvalue()
+            file_options={"contentType": "application/pdf"}
         )
+        
+        # --- 4. Generate Signed URL ---
+        url_response = supabase_client.storage.from_(bucket).create_signed_url(file_path, 1800)
+        download_url = url_response['signedURL']
 
-        # Convert ObjectId to string for JSON serialization
-        updated_user_doc['_id'] = str(updated_user_doc['_id'])
-        updated_user_doc = jsonable_encoder(updated_user_doc)
+        # --- 5. Update Database ---
+        updated_user_doc = None
+        if current_user:
+            updated_user_doc = await db["users"].find_one_and_update(
+                {"_id": ObjectId(current_user['_id'])},
+                {"$inc": {"usage_metrics.pdf_processed_today": 1}},
+                return_document=True
+            )
+            updated_user_doc['_id'] = str(updated_user_doc['_id'])
+            updated_user_doc = jsonable_encoder(updated_user_doc)
 
         return JSONResponse(content={
-            "status":"success",
+            "status": "success",
             "message": "PDFs merged and uploaded successfully!",
             "download_url": download_url,
-            "user_usage": updated_user_doc.get('usage_metrics', {})
+            "user_usage": updated_user_doc.get('usage_metrics', {}) if current_user else None
         }, status_code=status.HTTP_200_OK)
 
+    except HTTPException as e:
+        raise e
     except Exception as e:
         print(f"Error during PDF merge or upload: {e}")
-        raise HTTPException(detail={"status":"error","status_code":500, "message":f"Failed to merge or upload PDFs: {e}"},status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        raise HTTPException(detail={"status":"error", "message":"An internal error occurred."}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@router.post("/pdf/compress")
+async def compress_pdf(
+    files: List[UploadFile] = File(...),
+    compression_level: str = Form("medium", description="Compression level (low, medium, high)"),
+    current_user: dict | None = Depends(get_current_user_or_guest),
+    db=Depends(get_mongo_db)
+):
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "error", "message": "No files provided"}
+        )
+
+    # Quota check (for logged-in users)
+    if current_user and current_user["usage_metrics"]["pdf_processed_today"] >= current_user["usage_metrics"]["pdf_processed_limit_daily"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"status": "error", "message": "Daily PDF processing limit exceeded."}
+        )
+
+    try:
+        supabase_client = await get_supabase_client()
+        bucket = get_pdf_bucket_name()
+        compressed_urls = []
+
+        for upload_file in files:
+            if upload_file.content_type != "application/pdf":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"status": "error", "message": f"File {upload_file.filename} is not a PDF."}
+                )
+
+            # Read the PDF file
+            file_content = await upload_file.read()
+            
+            # Compress the PDF
+            compressed_content = compress_pdf_content(file_content, compression_level)
+            
+            # Generate filename and path
+            original_name = upload_file.filename or "compressed_file"
+            base_name = os.path.splitext(original_name)[0]
+            timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+            
+            if current_user:
+                file_path = f"{current_user['_id']}/{base_name}_compressed_{timestamp}.pdf"
+            else:
+                file_path = f"guest/{base_name}_compressed_{timestamp}.pdf"
+
+            # Upload to Supabase
+            supabase_client.storage.from_(bucket).upload(
+                path=file_path,
+                file=compressed_content,
+                file_options={"contentType": "application/pdf"}
+            )
+            SUPABASE_URL=settings.SUPABASE_URL
+            # Generate signed URL
+            url_response = supabase_client.storage.from_(bucket).create_signed_url(file_path, 1800)
+            compressed_urls.append(url_response['signedURL'])
+
+        # Update user usage if logged in
+        updated_user_doc = None
+        if current_user:
+            updated_user_doc = await db["users"].find_one_and_update(
+                {"_id": ObjectId(current_user['_id'])},
+                {"$inc": {"usage_metrics.pdf_processed_today": 1}},
+                return_document=True
+            )
+            updated_user_doc['_id'] = str(updated_user_doc['_id'])
+            updated_user_doc = jsonable_encoder(updated_user_doc)
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "message": "PDFs compressed and uploaded successfully!",
+                "download_urls": compressed_urls,
+                "user_usage": updated_user_doc.get('usage_metrics', {}) if updated_user_doc else None
+            },
+            status_code=status.HTTP_200_OK
+        )
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Error during PDF compression: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "error", "message": f"Failed to compress PDFs: {str(e)}"}
+        )
+
+
