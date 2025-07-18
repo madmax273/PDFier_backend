@@ -36,7 +36,15 @@ class Settings(BaseSettings):
     EMAIL_USER: str
     EMAIL_PASS: str
 
-    
+    # Firebase settings
+    # SERVICE_ACCOUNT_KEY_PATH: str
+    # FIREBASE_STORAGE_BUCKET: str
+    # FIREBASE_SERVICE_ACCOUNT_KEY_JSON: str
+
+    # Supabase settings
+    SUPABASE_URL: str
+    SUPABASE_SERVICE_ROLE_KEY: str
+    SUPABASE_PDF_BUCKET_NAME: str
 
     class Config:
         env_file = ".env"

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, Depends,status
 from fastapi.security import OAuth2PasswordRequestForm
-from app.schemas.auth import SignupRequest, VerifyOtpRequest,RefreshTokenRequest,ResetVerifyRequest,ResetPasswordRequest,ResendOtpRequest
-from app.core.security import hash_password,create_access_token, create_refresh_token,verify_password,decode_token
+from app.schemas.auth import SignupRequest, VerifyOtpRequest,ResetVerifyRequest,ResetPasswordRequest,ResendOtpRequest
+from app.core.security import hash_password,create_access_token, create_refresh_token,verify_password,decode_token,decode_refresh_token
 from app.utils.emails import send_verification_email
 from app.database.connection import get_mongo_db
 from datetime import datetime, timedelta
@@ -9,10 +9,13 @@ import random
 from bson import ObjectId
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from jose import JWTError
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from app.database.models import OTPModel, UserModel, UsageMetrics
 from app.schemas.users import UserOut
 from app.core.plans import get_initial_usage_metrics
+from fastapi.encoders import jsonable_encoder
+from fastapi import Body
+
 security = HTTPBearer()  # login endpoint issues tokens
 
 router = APIRouter()
@@ -141,43 +144,49 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(),db = Depends(ge
 
     access_token = create_access_token({"sub": str(user["_id"])})
     refresh_token = create_refresh_token({"sub": str(user["_id"])})
-    response = Response(status_code=200)
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=True,
-        samesite="None",
-        max_age=1800, # 30 minutes
-        path="/"
-    )
-
-    return {
-        "user":UserOut.model_validate(user),
+    print("access_token",access_token)
+    print("refresh_token",refresh_token)
+    content = {
+        "user": UserOut.model_validate(user),
         "refresh_token": refresh_token,
+        "access_token": access_token,
     }
+    content = jsonable_encoder(content)
 
-# @router.post("/refresh")
-# async def refresh_token(data: RefreshTokenRequest):
-#     payload = decode_token(data.refresh_token)
-#     if not payload or payload.get("type") != "refresh":
-#         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-
-#     user_id = payload.get("sub")
-#     user = await db.db["users"].find_one({"_id": ObjectId(user_id)})
-
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-
-#     # Create a new access token
-#     new_access_token = create_access_token({"sub": str(user["_id"])})
-
-#     return {
-#         "access_token": new_access_token,
-#         "token_type": "bearer"
-#     }
+    json_response = JSONResponse(content=content, status_code=status.HTTP_200_OK)
+    # json_response.set_cookie(
+    #     key="access_token",
+    #     value=access_token,
+    #     httponly=True,
+    #     secure=True,
+    #     samesite="None",
+    #     max_age=1800, # 30 minutes
+    #     path="/"
+    # )
+    return json_response
 
 
+
+@router.post("/refresh")
+async def refresh_token(refresh_token: str = Body(..., embed=True), db = Depends(get_mongo_db)):
+    payload = decode_refresh_token(refresh_token)
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+
+    user_id = payload.get("sub")
+    user = await db["users"].find_one({"_id": ObjectId(user_id)})
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Create a new access token
+    new_access_token = create_access_token({"sub": str(user["_id"])})
+
+    return JSONResponse(
+        content={"access_token": new_access_token, "token_type": "bearer"},
+        status_code=status.HTTP_200_OK,
+        headers={"Content-Type": "application/json"}
+    )
 
 @router.post("/forgot")
 async def forgot_password(request: ResetVerifyRequest,db = Depends(get_mongo_db)):
