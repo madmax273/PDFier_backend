@@ -17,6 +17,7 @@ class OptionalHTTPBearer(HTTPBearer):
             return None  # Instead of raising, return None for guest users
 
 security_scheme = OptionalHTTPBearer(auto_error=False)
+security_scheme2 = HTTPBearer(auto_error=False)
 
 async def get_current_user_or_guest(
     request: Request,
@@ -56,6 +57,43 @@ async def get_current_user_or_guest(
     except Exception as e:
         raise HTTPException(status_code=500, detail="error in dependency")
         
+
+async def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme2),
+    db = Depends(get_mongo_db)
+) -> dict:
+    """
+    Dependency that returns the current user if authenticated.
+    """
+    print("Authorization Header:", request.headers.get("authorization"))
+
+    if not credentials or not credentials.credentials or credentials.credentials.lower() == "undefined":
+        raise HTTPException(status_code=401, detail="No valid token provided")
+
+    token = None
+    # token = request.cookies.get("access_token")
+    if credentials and not token:
+        token = credentials.credentials
+
+    try:
+        payload = (lambda t: decode_token(t))(token)
+        user_id: str = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Handle quota resets for authenticated users
+        await _handle_quota_reset(user_doc, db)
+        return user_doc
+    except HTTPException as e:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="error in dependency")
+
 
 async def _handle_quota_reset(user_doc: dict, db):
     """Handle quota reset logic for authenticated users"""

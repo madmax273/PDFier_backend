@@ -14,7 +14,9 @@ from fastapi import Form
 import fitz  # PyMuPDF
 from app.core.config import settings
 import os
+import json
 from app.utils.compress import compress_pdf_content
+from app.utils.protect import protect_pdf_content
 
 router = APIRouter()
 
@@ -194,5 +196,123 @@ async def compress_pdf(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "error", "message": f"Failed to compress PDFs: {str(e)}"}
         )
+
+
+# Add this new endpoint to your router
+@router.post("/pdf/protect")
+async def protect_pdf(
+    files: List[UploadFile] = File(...),
+    password: str = Form(..., description="Password for PDF protection"),
+    permissions: str = Form("{}", description="JSON string of permissions"),
+    current_user: dict | None = Depends(get_current_user_or_guest),
+    db=Depends(get_mongo_db)
+):
+
+    """
+    Protect PDF files with password and permissions.
+    
+    Permissions format:
+    {
+        "printing": "high",  # 'none', 'low', or 'high'
+        "modifying": False,
+        "copying": False,
+        "form_filling": False
+    }
+    """
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "error", "message": "No files provided"}
+        )
+
+    # Quota check for logged-in users
+    if current_user and current_user["usage_metrics"]["pdf_processed_today"] >= current_user["usage_metrics"]["pdf_processed_limit_daily"]:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "status": "error",
+                "message": f"Daily limit of {current_user['usage_metrics']['pdf_processed_limit_daily']} PDFs reached"
+            }
+        )
+
+    try:
+        # Parse permissions
+        try:
+            permissions_dict = json.loads(permissions)
+        except json.JSONDecodeError:
+            permissions_dict = {
+                "printing": "high",
+                "modifying": False,
+                "copying": False,
+                "form_filling": False
+            }
+
+        # Process each file
+        # Upload to storage
+        supabase = await get_supabase_client()
+        bucket_name = get_pdf_bucket_name()
+        processed_urls = []
+
+        for file in files:
+            if not file.filename.lower().endswith('.pdf'):
+                continue
+
+            # Read file content
+            file_content = await file.read()
+            
+            # Protect PDF
+            protected_pdf = await protect_pdf_content(file_content, password, permissions_dict)
+            
+            
+            
+            # Generate unique filename
+            if current_user:
+                safe_filename = f"{current_user['_id']}/protected_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+            else:
+                safe_filename = f"guest/protected_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file.filename}"
+            
+            # Upload to Supabase
+            res = supabase.storage.from_(bucket_name).upload(
+                path=safe_filename,
+                file_options={"content-type": "application/pdf"},
+                file=protected_pdf
+            )
+            
+            # Get public URL
+            download_response = supabase.storage.from_(bucket_name).create_signed_url(safe_filename, 1800)
+            
+            processed_urls.append(download_response['signedURL'])
+
+         # Update user usage if logged in
+        updated_user_doc = None
+        if current_user:
+            updated_user_doc = await db["users"].find_one_and_update(
+                {"_id": ObjectId(current_user['_id'])},
+                {"$inc": {"usage_metrics.pdf_processed_today": 1}},
+                return_document=True
+            )
+            updated_user_doc['_id'] = str(updated_user_doc['_id'])
+            updated_user_doc = jsonable_encoder(updated_user_doc)
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "message": "PDFs protected successfully!",
+                "download_url": processed_urls,
+                "user_usage": updated_user_doc.get("usage_metrics", {}) if updated_user_doc else None
+            },
+            status_code=status.HTTP_200_OK
+        )
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Error during PDF protection: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"status": "error", "message": f"Failed to protect PDFs: {str(e)}"}
+        )
+
+
 
 

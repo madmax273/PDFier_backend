@@ -46,6 +46,25 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str
     SUPABASE_PDF_BUCKET_NAME: str
 
+    # OpenAI / Gemini API Key (choose one or configure both)
+    OPENAI_API_KEY: str = None # Set to None or empty string if not using OpenAI
+    GOOGLE_API_KEY: str = None # Set to None or empty string if not using Google Gemini
+
+    # LLM and Embedding Model Names
+    LLM_MODEL_NAME: str = "gpt-3.5-turbo" # or "gemini-pro" or other
+    EMBEDDING_MODEL_NAME: str = "text-embedding-ada-002" # or "text-embedding-004" or "sentence-transformers/all-MiniLM-L6-v2"
+
+    # Pinecone Settings
+    PINECONE_API_KEY: str
+    PINECONE_ENVIRONMENT: str # e.g., "us-east-1"
+    PINECONE_INDEX_NAME: str = "pdf-rag-index" # Name of your Pinecone index
+
+    # RAG Configuration
+    CHUNK_SIZE: int = 1000
+    CHUNK_OVERLAP: int = 200
+    TOP_K_RETRIEVAL: int = 5 # Number of top relevant chunks to retrieve
+    CONVERSATION_HISTORY_LIMIT: int = 5 # Number of messages to include in conversation history
+
     class Config:
         env_file = ".env"
 

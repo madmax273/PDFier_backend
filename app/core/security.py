@@ -12,7 +12,6 @@ def verify_password(plain, hashed):
     return pwd_context.verify(plain, hashed)
 
 
-
 def decode_token(token: str):
     try:
         payload = jwt.decode(
