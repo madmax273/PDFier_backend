@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, status, Query
 from uuid import UUID
 from app.schemas.rag import DocumentUploadResponse
-from app.database.crud import create_document, update_document_status
+from app.database.crud import create_document, update_document_status,get_documents_by_collection
 from app.integrations.supabase_connect import get_supabase_client,set_supabase_rls_user_context,get_pdf_bucket_name
 from app.services.rag_service import process_pdf_for_rag
 from supabase import Client
@@ -11,6 +11,12 @@ import io
 from datetime import datetime
 from app.services.auth_services import get_current_user
 import logging
+from fastapi.responses import JSONResponse
+from app.schemas.rag import DocumentOutDB
+from typing import List
+from fastapi.encoders import jsonable_encoder
+from app.core.config import settings
+
 router = APIRouter()
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -149,13 +155,68 @@ def upload_document(
         )
 
 # (Optional: Add GET /documents to list documents in a collection)
-# @router.get("/collection/{collection_id}/documents", response_model=List[DocumentInDB])
-# async def get_documents_in_collection(
-#     collection_id: UUID,
-#     user_id: str = Depends(get_current_active_user),
-#     _rls_context: None = Depends(apply_rls_context),
-#     supabase: Client = Depends(get_supabase_client)
-# ):
-#     # Implement fetching documents from Supabase `documents` table
-#     # RLS will ensure only documents in owned collections are returned
-#     pass
+@router.get("/", response_model=List[DocumentOutDB])
+async def get_documents_in_collection(
+    collection_id: str,
+    user_id: str = Depends(get_current_user),
+    _rls_context: None = Depends(set_supabase_rls_user_context),
+    supabase: Client = Depends(get_supabase_client)
+):
+    # Fetch documents and return full objects with an added public URL field
+    print("get_documents_in_collection: collection_id", collection_id)
+    print("get_documents_in_collection: user_id", user_id)
+    try:
+        documents = get_documents_by_collection(supabase, UUID(collection_id))
+        print("get_documents_in_collection: documents", documents)
+        if not documents:
+            return []
+
+        bucket = get_pdf_bucket_name()
+
+        docs_out: List[DocumentOutDB] = []
+        for doc in documents:
+            path = doc.get("storage_path")
+            url = ""
+            if path:
+                try:
+                    res = supabase.storage.from_(bucket).get_public_url(path)
+                    # Handle different response shapes across supabase-py versions
+                    if isinstance(res, dict):
+                        url = res.get("publicURL") or res.get("publicUrl") or res.get("public_url") or ""
+                    else:
+                        data = getattr(res, "data", None)
+                        if isinstance(data, dict):
+                            url = data.get("publicUrl") or data.get("publicURL") or data.get("public_url") or ""
+                    # Fallback: construct public URL manually (works if bucket is public)
+                    if not url:
+                        base = settings.SUPABASE_URL.rstrip("/")
+                        url = f"{base}/storage/v1/object/public/{bucket}/{path}"
+                    # If still empty, generate a signed URL (bucket not public)
+                    if not url:
+                        try:
+                            signed = supabase.storage.from_(bucket).create_signed_url(path, 3600)
+                            if isinstance(signed, dict):
+                                url = signed.get("signedURL") or signed.get("signedUrl") or signed.get("signed_url") or ""
+                            else:
+                                sdata = getattr(signed, "data", None)
+                                if isinstance(sdata, dict):
+                                    url = sdata.get("signedUrl") or sdata.get("signedURL") or sdata.get("signed_url") or ""
+                        except Exception as se:
+                            print(f"Failed to create signed URL for path {path}: {se}")
+                except Exception as e:
+                    print(f"Failed to get public URL for path {path}: {e}")
+                    url = ""
+
+            doc_with_url = {**doc, "url": url}
+            # Validate/convert to schema instance
+            docs_out.append(DocumentOutDB.model_validate(doc_with_url))
+
+        return docs_out
+    except Exception as e:
+        print("get_documents_in_collection: error", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve documents: {str(e)}"
+        )   
+
+        

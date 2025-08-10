@@ -1,7 +1,7 @@
 # app/api/v1/endpoints/collections.py (New File)
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from app.schemas.rag import CollectionCreate, CollectionInDB
+from app.schemas.rag import CollectionCreate, CollectionInDB, CollectionOutDB
 from app.database.crud import create_collection, get_collections_by_user
 from app.integrations.supabase_connect import get_supabase_client,set_supabase_rls_user_context
 from supabase import Client
@@ -55,11 +55,21 @@ def get_all_user_collections(
     user_id = str(current_user["_id"])
     try:
         collections = get_collections_by_user(supabase, user_id)
+        if not collections:
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "message": "Collections retrieved successfully!",
+                    "data": [],
+                },
+                status_code=status.HTTP_200_OK
+            )
+        
         return JSONResponse(
             content={
                 "status": "success",
                 "message": "Collections retrieved successfully!",
-                "data": jsonable_encoder(collections),
+                "data": jsonable_encoder(CollectionOutDB.model_validate(collection) for collection in collections),
             },
             status_code=status.HTTP_200_OK
         )

@@ -342,7 +342,7 @@ router = APIRouter()
 
 
 # New REST API Endpoint
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/", response_model=ChatResponse)
 async def chat_with_rag(
     payload: ChatMessagePayload,
     current_user: str = Depends(get_current_user),  # Authenticates from Authorization header
@@ -366,19 +366,15 @@ async def chat_with_rag(
     try:
         print(f"Received chat request from user {current_user['_id']}: {payload}")
         collection_id_str = payload.collection_id
-        conversation_id_uuid = None
+        conversation_id_str = payload.conversation_id
         user_id = str(current_user['_id'])
         print("Handling conversation")
         # 1. Handle Conversation (create new or use existing)
-        if payload.conversation_id:
-            # TODO: Add logic to verify conversation belongs to user and collection
-            conversation_id_uuid = payload.conversation_id
-            print(f"Using existing conversation for user {user_id}: {conversation_id_uuid}")
-        else:
-            print(f"Creating new conversation for user {user_id} with collection {collection_id_str}")
-            new_conv = create_conversation(supabase_client, user_id, collection_id_str)
-            conversation_id_uuid = new_conv['id']
-            print(f"New conversation started for user {user_id}: {conversation_id_uuid}")
+        
+        # TODO: Add logic to verify conversation belongs to user and collection
+        conversation_id_uuid = UUID(conversation_id_str)
+        print(f"Using existing conversation for user {user_id}: {conversation_id_uuid}")
+        
         print("Storing user's message in conversation")
         # 2. Store the user's message
         create_message(

@@ -22,6 +22,15 @@ class CollectionInDB(CollectionBase):
     class Config:
         from_attributes = True # For Pydantic v2+
 
+class CollectionOutDB(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str]
+
+    class Config:
+        from_attributes = True
+    
+
 # --- Document Schemas ---
 class DocumentBase(BaseModel):
     file_name: str
@@ -36,6 +45,19 @@ class DocumentInDB(DocumentBase):
 
     class Config:
         from_attributes = True
+
+class DocumentOutDB(BaseModel):
+    id: UUID
+    file_name: str
+    status: str
+    collection_id: UUID
+    user_id: str
+    storage_path: str
+    uploaded_at: datetime
+    url: str
+
+    class Config:
+        from_attributes = True        
 
 # --- Document Chunk Schemas (Lightweight, primarily for Pinecone ID reference) ---
 class DocumentChunkInDB(BaseModel):
@@ -81,6 +103,18 @@ class MessageInDB(MessageBase):
     class Config:
         from_attributes = True
 
+class MessageOutDB(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    timestamp: datetime
+    sender: str
+    content: str
+    
+
+
+    class Config:
+        from_attributes = True        
+
 # --- RAG Specific Request/Response Schemas ---
 class ChatMessagePayload(BaseModel):
     query: str
@@ -103,4 +137,3 @@ class DocumentUploadResponse(BaseModel):
 class ChatResponse(BaseModel):
     conversation_id: str
     ai_response: str
-    retrieved_sources: Optional[List[str]] = None # IDs of chunks used    

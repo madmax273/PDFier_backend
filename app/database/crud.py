@@ -67,6 +67,16 @@ def update_document_status(
         
     return response.data[0]
 
+def get_documents_by_collection(
+    supabase: Client, collection_id: UUID
+) -> List[Dict[str, Any]]:
+    response = supabase.table('documents').select('*').eq('collection_id', str(collection_id)).execute()
+    
+    if hasattr(response, 'error') and response.error:
+        raise Exception(f"Supabase error getting documents: {response.error}")
+        
+    return response.data if response.data else []    
+
 # --- Document Chunks CRUD ---
 def create_document_chunks(
     supabase: Client, chunks_data: List[Dict[str, Any]]
@@ -186,10 +196,13 @@ def create_message(
 def get_messages_by_conversation(
     supabase: Client, conversation_id: UUID, limit: int = 10
 ) -> List[Dict[str, Any]]:
+    print(f"get_messages_by_conversation: {conversation_id} {limit}")
     # RLS will ensure messages from owned conversations are returned
-    response = supabase.from_('messages').select('*').eq('conversation_id', str(conversation_id)).order('timestamp', desc=False).limit(limit).execute()
+    response = supabase.from_('messages').select('*').eq('conversation_id', str(conversation_id)).order('timestamp', desc=True).limit(limit).execute()
     
     if hasattr(response, 'error') and response.error:
+        print(f"Supabase error getting messages: {response.error}")
         raise Exception(f"Supabase error getting messages: {response.error}")
         
+    print(f"get_messages_by_conversation: {response.data}")
     return response.data if response.data else []
