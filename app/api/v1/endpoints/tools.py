@@ -17,6 +17,7 @@ import os
 import json
 from app.utils.compress import compress_pdf_content
 from app.utils.protect import protect_pdf_content
+from app.integrations.supabase_connect import set_supabase_rls_user_context
 
 router = APIRouter()
 
@@ -27,7 +28,8 @@ router = APIRouter()
 async def merge_pdf(
     files: List[UploadFile] = File(...),
     current_user: dict | None = Depends(get_current_user_or_guest),
-    db=Depends(get_mongo_db)
+    db=Depends(get_mongo_db),
+    _rls_context=Depends(set_supabase_rls_user_context),
 ):
     if len(files) < 2:
         raise HTTPException(detail={"status":"error", "message":"Please upload at least two PDF files."}, status_code=status.HTTP_400_BAD_REQUEST)
@@ -79,9 +81,18 @@ async def merge_pdf(
             file_options={"contentType": "application/pdf"}
         )
         
-        # --- 4. Generate Signed URL ---
-        url_response = supabase_client.storage.from_(bucket).create_signed_url(file_path, 1800)
-        download_url = url_response['signedURL']
+        # --- 4. Generate Public URL ---
+        public = supabase_client.storage.from_(bucket).get_public_url(file_path)
+        download_url = None
+        if isinstance(public, dict):
+            download_url = public.get("publicURL") or public.get("publicUrl") or public.get("public_url")
+        else:
+            pdata = getattr(public, "data", None)
+            if isinstance(pdata, dict):
+                download_url = pdata.get("publicUrl") or pdata.get("publicURL") or pdata.get("public_url")
+        if not download_url:
+            base = settings.SUPABASE_URL.rstrip("/")
+            download_url = f"{base}/storage/v1/object/public/{bucket}/{file_path}"
 
         # --- 5. Update Database ---
         updated_user_doc = None
@@ -113,7 +124,8 @@ async def compress_pdf(
     files: List[UploadFile] = File(...),
     compression_level: str = Form("medium", description="Compression level (low, medium, high)"),
     current_user: dict | None = Depends(get_current_user_or_guest),
-    db=Depends(get_mongo_db)
+    db=Depends(get_mongo_db),
+    _rls_context=Depends(set_supabase_rls_user_context),
 ):
     if not files:
         raise HTTPException(
@@ -163,9 +175,19 @@ async def compress_pdf(
                 file_options={"contentType": "application/pdf"}
             )
             SUPABASE_URL=settings.SUPABASE_URL
-            # Generate signed URL
-            url_response = supabase_client.storage.from_(bucket).create_signed_url(file_path, 1800)
-            compressed_urls.append(url_response['signedURL'])
+            # Generate public URL
+            public = supabase_client.storage.from_(bucket).get_public_url(file_path)
+            public_url = None
+            if isinstance(public, dict):
+                public_url = public.get("publicURL") or public.get("publicUrl") or public.get("public_url")
+            else:
+                pdata = getattr(public, "data", None)
+                if isinstance(pdata, dict):
+                    public_url = pdata.get("publicUrl") or pdata.get("publicURL") or pdata.get("public_url")
+            if not public_url:
+                base = settings.SUPABASE_URL.rstrip("/")
+                public_url = f"{base}/storage/v1/object/public/{bucket}/{file_path}"
+            compressed_urls.append(public_url)
 
         # Update user usage if logged in
         updated_user_doc = None
@@ -205,7 +227,8 @@ async def protect_pdf(
     password: str = Form(..., description="Password for PDF protection"),
     permissions: str = Form("{}", description="JSON string of permissions"),
     current_user: dict | None = Depends(get_current_user_or_guest),
-    db=Depends(get_mongo_db)
+    db=Depends(get_mongo_db),
+    _rls_context=Depends(set_supabase_rls_user_context),
 ):
 
     """
@@ -279,9 +302,19 @@ async def protect_pdf(
             )
             
             # Get public URL
-            download_response = supabase.storage.from_(bucket_name).create_signed_url(safe_filename, 1800)
+            pub = supabase.storage.from_(bucket_name).get_public_url(safe_filename)
+            public_url = None
+            if isinstance(pub, dict):
+                public_url = pub.get("publicURL") or pub.get("publicUrl") or pub.get("public_url")
+            else:
+                pdata = getattr(pub, "data", None)
+                if isinstance(pdata, dict):
+                    public_url = pdata.get("publicUrl") or pdata.get("publicURL") or pdata.get("public_url")
+            if not public_url:
+                base = settings.SUPABASE_URL.rstrip("/")
+                public_url = f"{base}/storage/v1/object/public/{bucket_name}/{safe_filename}"
             
-            processed_urls.append(download_response['signedURL'])
+            processed_urls.append(public_url)
 
          # Update user usage if logged in
         updated_user_doc = None
