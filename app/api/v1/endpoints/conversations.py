@@ -18,7 +18,7 @@ router = APIRouter()
 @router.post("/")
 async def create(
     collection_id: str,
-    title: Optional[str] = None,
+    title: str,
     current_user: dict = Depends(get_current_user),
     supabase_client: Client = Depends(get_supabase_client),
     _rls_context: dict = Depends(set_supabase_rls_user_context),

@@ -9,7 +9,7 @@ from app.services.rag_service import process_pdf_for_rag
 from supabase import Client
 import io
 from datetime import datetime
-from app.services.auth_services import get_current_user
+from app.services.auth_services import get_current_user,get_current_user_or_guest
 import logging
 from fastapi.responses import JSONResponse
 from app.schemas.rag import DocumentOutDB
@@ -219,4 +219,61 @@ async def get_documents_in_collection(
             detail=f"Failed to retrieve documents: {str(e)}"
         )   
 
-        
+
+@router.get("/list-user-files")
+async def list_user_files(
+    current_user: dict = Depends(get_current_user),
+    _rls_context: None = Depends(set_supabase_rls_user_context),
+    supabase: Client = Depends(get_supabase_client)
+):
+    try:
+        user_id = current_user['_id']
+        BUCKET_NAME = get_pdf_bucket_name()
+        # Ensure user_id ends with a slash for Supabase folder structure
+        prefix = f"{user_id}/"
+
+        # Try direct folder listing
+        print(f"Attempting to list files with prefix: '{prefix}'")
+        res = supabase.storage.from_(BUCKET_NAME).list(
+            path=prefix,
+            options={
+                "limit": 100,
+                "offset": 0,
+                "sort_by": {"column": "name", "order": "asc"}
+            }
+        )
+
+        if res:
+            print(f"Found {len(res)} files for user {user_id} via direct prefix listing.")
+            files_with_urls = []
+            for f in res:
+                # Create public URL
+                public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/{BUCKET_NAME}/{f['name']}"
+                files_with_urls.append({"name": f["name"], "id": f["id"], "url": public_url})
+            return {"files": files_with_urls}
+
+        # Fallback: List all files and filter manually
+        print(f"No files found for prefix '{prefix}'. Trying full bucket listing...")
+        all_files = supabase.storage.from_(BUCKET_NAME).list(
+            path="",  # Root listing
+            options={
+                "limit": 1000,
+                "offset": 0,
+                "sort_by": {"column": "name", "order": "asc"}
+            }
+        )
+
+        filtered_files = [f for f in all_files if f["name"].startswith(f"{user_id}/")]
+        print(f"Found {len(filtered_files)} files for user {user_id} via fallback filtering.")
+        files_with_urls = []
+        for f in filtered_files:
+            url = f["metadata"].get("public_url")
+            if not url:
+                base = settings.SUPABASE_URL.rstrip("/")
+                url = f"{base}/storage/v1/object/public/{BUCKET_NAME}/{f['name']}"
+            files_with_urls.append({"name": f["name"], "id": f["id"], "url": url})
+        return {"files": files_with_urls}
+
+    except Exception as e:
+        print("Error while listing files:", e)
+        raise HTTPException(status_code=500, detail=str(e))
