@@ -20,7 +20,7 @@ app = FastAPI(
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://localhost:3000"],  # In production, replace with specific origins
+    allow_origins=["https://localhost:3000","https://pdfier-frontend1.vercel.app"],  # In production, replace with specific origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
