@@ -1,3 +1,4 @@
+
 # PDFier Backend
 
 PDFier is a powerful document processing and management system that implements Retrieval-Augmented Generation (RAG) to provide AI-powered chat capabilities with your PDF documents. The backend is built with FastAPI and integrates with vector databases and LLMs to deliver accurate, context-aware responses based on your documents.
@@ -139,3 +140,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 For support, please open an issue in the GitHub repository or contact the maintainers.
+
+
