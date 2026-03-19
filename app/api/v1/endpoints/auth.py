@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Request, HTTPException, Depends,status
 from fastapi.security import OAuth2PasswordRequestForm
-from app.schemas.auth import SignupRequest, VerifyOtpRequest,ResetVerifyRequest,ResetPasswordRequest,ResendOtpRequest
+from app.schemas.auth import SignupRequest, VerifyOtpRequest,ResetVerifyRequest,ResetPasswordRequest,ResendOtpRequest, GoogleAuthRequest
 from app.core.security import hash_password,create_access_token, create_refresh_token,verify_password,decode_token,decode_refresh_token
+import os
+import httpx
+from fastapi.responses import RedirectResponse
 from app.utils.emails import send_verification_email
 from app.database.connection import get_mongo_db
 from datetime import datetime, timedelta
@@ -15,6 +18,7 @@ from app.schemas.users import UserOut
 from app.core.plans import get_initial_usage_metrics
 from fastapi.encoders import jsonable_encoder
 from fastapi import Body
+from app.core.config import settings
 
 security = HTTPBearer()  # login endpoint issues tokens
 
@@ -230,3 +234,85 @@ async def reset_forgot(request: ResetPasswordRequest,db = Depends(get_mongo_db))
     return {
         "message": "Password reset successful"
     }
+
+@router.get("/google/login")
+async def google_login():
+    google_client_id = settings.GOOGLE_CLIENT_ID
+    redirect_uri = settings.GOOGLE_REDIRECT_URI
+    scope = "openid email profile"
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={google_client_id}&redirect_uri={redirect_uri}&scope={scope}&access_type=offline&prompt=consent"
+    return RedirectResponse(url)
+
+@router.post("/google")
+async def google_auth(data: GoogleAuthRequest, request: Request, db = Depends(get_mongo_db)):
+    code = data.code
+    google_client_id = settings.GOOGLE_CLIENT_ID
+    google_client_secret = settings.GOOGLE_CLIENT_SECRET
+    redirect_uri = settings.GOOGLE_REDIRECT_URI
+
+    token_url = "https://oauth2.googleapis.com/token"
+    token_data = {
+        "code": code,
+        "client_id": google_client_id,
+        "client_secret": google_client_secret,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code"
+    }
+
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(token_url, data=token_data)
+        if not token_res.is_success:
+            raise HTTPException(status_code=400, detail="Failed to verify Google Token")
+        
+        token_json = token_res.json()
+        google_access_token = token_json.get("access_token")
+
+        user_info_url = "https://www.googleapis.com/oauth2/v2/userinfo"
+        user_info_headers = {"Authorization": f"Bearer {google_access_token}"}
+        user_info_res = await client.get(user_info_url, headers=user_info_headers)
+        
+        if not user_info_res.is_success:
+            raise HTTPException(status_code=400, detail="Failed to get user profile from Google")
+            
+        user_info = user_info_res.json()
+        
+    email = user_info.get("email")
+    name = user_info.get("name", "Google User")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Google authentication failed")
+
+    # Check database
+    user = await db["users"].find_one({"email": email})
+    if not user:
+        # Create user
+        ip_address = request.client.host if request.client else "unknown"
+        hashed_pwd = hash_password(str(ObjectId())) # Placeholder since oauth
+        usage_metrics = UsageMetrics(**get_initial_usage_metrics("basic"))
+        
+        new_user = UserModel(
+            name=name,
+            email=email,
+            password=hashed_pwd,
+            verified=True, # Auto-verify Google users
+            ip_address=ip_address,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            plan_type="basic",
+            usage_metrics=usage_metrics,   
+        )
+        
+        user_result = await db["users"].insert_one(new_user.dict())
+        user = await db["users"].find_one({"_id": user_result.inserted_id})
+
+    # Generate JWT
+    access_token = create_access_token({"sub": str(user["_id"])})
+    refresh_token = create_refresh_token({"sub": str(user["_id"])})
+    
+    content = {
+        "user": UserOut.model_validate(user),
+        "refresh_token": refresh_token,
+        "access_token": access_token,
+    }
+    content = jsonable_encoder(content)
+    return JSONResponse(content=content, status_code=status.HTTP_200_OK)

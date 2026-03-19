@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = None # Set to None or empty string if not using Google Gemini
 
     # LLM and Embedding Model Names
-    LLM_MODEL_NAME: str = "gpt-3.5-turbo" # or "gemini-pro" or other
-    EMBEDDING_MODEL_NAME: str = "text-embedding-ada-002" # or "text-embedding-004" or "sentence-transformers/all-MiniLM-L6-v2"
+    LLM_MODEL_NAME: str = "gemini-pro" # or "gpt-3.5-turbo" or other
+    EMBEDDING_MODEL_NAME: str = "text-embedding-004" # or "text-embedding-ada-002" or "models/text-embedding-004"
 
     # Pinecone Settings
     PINECONE_API_KEY: str
@@ -64,7 +64,12 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 200
     TOP_K_RETRIEVAL: int = 5 # Number of top relevant chunks to retrieve
     CONVERSATION_HISTORY_LIMIT: int = 5 # Number of messages to include in conversation history
-
+    
+    # Google OAuth 2.0 Configuration
+    GOOGLE_CLIENT_ID: str
+    GOOGLE_CLIENT_SECRET: str
+    GOOGLE_REDIRECT_URI: str
+    
     class Config:
         env_file = ".env"
 
