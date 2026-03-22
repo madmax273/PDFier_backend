@@ -65,14 +65,14 @@ async def generate_embedding(text: str) -> List[float]:
             raise RuntimeError(f"Failed to generate embedding: {e}")
     
     # Google models
-    elif settings.EMBEDDING_MODEL_NAME.startswith("models/embedding-") and settings.GOOGLE_API_KEY:
+    elif settings.EMBEDDING_MODEL_NAME in ["text-embedding-004", "models/text-embedding-004"] and settings.GOOGLE_API_KEY:
         if not google_gemini_model:
             raise ValueError("Google Gemini client not initialized. Check your API key.")
             
         try:
             import google.generativeai as genai
             result = genai.embed_content(
-                model=settings.EMBEDDING_MODEL_NAME,
+                model="models/text-embedding-004",
                 content=text,
                 task_type="RETRIEVAL_DOCUMENT"
             )
