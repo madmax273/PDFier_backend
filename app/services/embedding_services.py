@@ -19,15 +19,32 @@ def initialize_llm_clients():
     global google_gemini_model # Only need to globalize the one you're using
     if settings.GOOGLE_API_KEY:
         genai.configure(api_key=settings.GOOGLE_API_KEY)
-        google_gemini_model = genai.GenerativeModel(settings.LLM_MODEL_NAME) # Initialize chat model
-        print(" Google Gemini client initialized.")
+        
+        # Check generated content model availability dynamically
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Format the configured model 
+        configured_model = settings.LLM_MODEL_NAME
+        if not configured_model.startswith("models/"):
+             configured_model = f"models/{configured_model}"
+             
+        eval_model = settings.LLM_MODEL_NAME
+        if configured_model not in available_models:
+             # Fallback to the first available chat model, preferring flash models
+             flash_models = [m for m in available_models if "flash" in m]
+             if flash_models:
+                 eval_model = flash_models[0].replace("models/", "") 
+             elif available_models:
+                 eval_model = available_models[0].replace("models/", "")
+             print(f"Configured model {settings.LLM_MODEL_NAME} not found. Falling back to {eval_model}")
+
+        google_gemini_model = genai.GenerativeModel(eval_model) # Initialize chat model
+        print(f" Google Gemini client initialized with model: {eval_model}.")
     else:
         # If you were using OpenAI, its initialization would go here.
         # But since you're using Google, this block might be empty or raise an error
         # if no LLM client is configured.
         print("Google Gemini API Key not found. Gemini client not initialized.")
-        # Consider raising an error if an LLM is absolutely required for app startup
-        # raise RuntimeError("No LLM API key provided. Cannot initialize LLM clients.")
 
 # Initialize clients when module is imported
 initialize_llm_clients()
@@ -65,18 +82,28 @@ async def generate_embedding(text: str) -> List[float]:
             raise RuntimeError(f"Failed to generate embedding: {e}")
     
     # Google models
-    elif settings.EMBEDDING_MODEL_NAME.startswith("models/embedding-") and settings.GOOGLE_API_KEY:
+    elif ("embedding" in settings.EMBEDDING_MODEL_NAME) and settings.GOOGLE_API_KEY:
         if not google_gemini_model:
             raise ValueError("Google Gemini client not initialized. Check your API key.")
             
         try:
             import google.generativeai as genai
+            
+            # Find an available embedding model dynamically
+            available_models = [m.name for m in genai.list_models() if 'embedContent' in m.supported_generation_methods]
+            eval_model = available_models[0] if available_models else "models/text-embedding-004"
+
+            # If the user-specified model is actually valid, we optionally could use it, 
+            # but let's just safely use the first available one to prevent 404s.
+            if settings.EMBEDDING_MODEL_NAME in available_models:
+                eval_model = settings.EMBEDDING_MODEL_NAME
+
             result = genai.embed_content(
-                model=settings.EMBEDDING_MODEL_NAME,
+                model=eval_model,
                 content=text,
-                task_type="RETRIEVAL_DOCUMENT"
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=768
             )
-            print(result)
             return result["embedding"]
         except Exception as e:
             logger.error(f"Error generating Google embedding: {e}")
@@ -113,7 +140,7 @@ async def get_llm_completion_stream(prompt: str):
             # Assuming google_gemini_model is already configured with API key
             response_stream = google_gemini_model.generate_content(
                 prompt,
-                stream=False,
+                stream=True,
                 safety_settings=[
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -122,7 +149,8 @@ async def get_llm_completion_stream(prompt: str):
                 ]
             )
             for chunk in response_stream:
-                yield chunk.text
+                if chunk.text:
+                    yield chunk.text
         except Exception as e:
             print(f"Error streaming Google Gemini LLM response: {e}")
             yield "[ERROR] Could not generate response."

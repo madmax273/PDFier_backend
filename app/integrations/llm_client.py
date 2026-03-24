@@ -13,14 +13,29 @@ def initialize_llm_clients():
     global google_gemini_model # Only need to globalize the one you're using
     if settings.GOOGLE_API_KEY:
         genai.configure(api_key=settings.GOOGLE_API_KEY)
-        google_gemini_model = genai.GenerativeModel(settings.LLM_MODEL_NAME) # Initialize chat model
-        print("✅ Google Gemini client initialized.")
+        
+        # Check generated content model availability dynamically
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Format the configured model 
+        configured_model = settings.LLM_MODEL_NAME
+        if not configured_model.startswith("models/"):
+             configured_model = f"models/{configured_model}"
+             
+        eval_model = settings.LLM_MODEL_NAME
+        if configured_model not in available_models:
+             # Fallback to the first available chat model, preferring flash models
+             flash_models = [m for m in available_models if "flash" in m]
+             if flash_models:
+                 eval_model = flash_models[0].replace("models/", "") 
+             elif available_models:
+                 eval_model = available_models[0].replace("models/", "")
+             print(f"Configured model {settings.LLM_MODEL_NAME} not found. Falling back to {eval_model}")
+
+        google_gemini_model = genai.GenerativeModel(eval_model) # Initialize chat model
+        print(f" Google Gemini client initialized with model: {eval_model}.")
     else:
         # If you were using OpenAI, its initialization would go here.
         # But since you're using Google, this block might be empty or raise an error
         # if no LLM client is configured.
         print("Google Gemini API Key not found. Gemini client not initialized.")
-        # Consider raising an error if an LLM is absolutely required for app startup
-        # raise RuntimeError("No LLM API key provided. Cannot initialize LLM clients.")
-
-
