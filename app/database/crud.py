@@ -26,7 +26,7 @@ def get_collections_by_user(supabase: Client, user_id: str) -> List[Dict[str, An
     Get all collections for a user.
     RLS will automatically filter by user_id due to the set_supabase_rls_user_context dependency.
     """
-    response = supabase.table('collections').select('*').execute()
+    response = supabase.table('collections').select('*').eq('user_id', user_id).execute()
     
     if hasattr(response, 'error') and response.error:
         raise Exception(f"Supabase error: {response.error}")
